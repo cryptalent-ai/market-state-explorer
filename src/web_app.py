@@ -1,4 +1,4 @@
-"""Production Streamlit orchestration for Market State Explorer v1.0."""
+"""Production Streamlit orchestration for Market State Explorer v1.0.1."""
 from __future__ import annotations
 
 import json
@@ -59,12 +59,24 @@ def calculate_validation(derived: pd.DataFrame, config: ModelConfig, non_overlap
     return build_validation_summary(derived, config, non_overlapping=non_overlap)
 
 
+def _is_delayed_archive(active_meta) -> bool:
+    if active_meta is None:
+        return False
+    return "delayed hosted fallback" in str(active_meta.source).lower()
+
+
 def _render_dashboard(active_derived, active_meta, active_error, timezone, scope, dataset, candidate):
-    live_tab, research_tab = st.tabs(("Current Market State", "12-Month Research Benchmark"))
-    with live_tab:
+    recent_tab, research_tab = st.tabs(("Recent Market State", "12-Month Research Benchmark"))
+    with recent_tab:
         if active_derived is None:
-            st.warning(active_error or "Select Live Binance or upload a valid research CSV.")
+            st.warning(active_error or "Select Binance Recent or upload a valid research CSV.")
         else:
+            if _is_delayed_archive(active_meta):
+                st.warning(
+                    "Binance futures REST is unavailable from this hosting region (HTTP 451). "
+                    "Showing the latest official daily-archive snapshot instead. This view is delayed "
+                    "and must not be treated as the current market state."
+                )
             show_current_state(active_derived, timezone)
             if active_meta is not None:
                 c1, c2, c3, c4 = st.columns(4)
@@ -72,7 +84,13 @@ def _render_dashboard(active_derived, active_meta, active_error, timezone, scope
                 c2.metric("OI coverage", f"{active_meta.oi_coverage:.2%}")
                 c3.metric("Future OI matches", f"{active_meta.future_oi_matches:,}")
                 c4.metric("Completed through UTC", active_meta.completed_through_utc[5:16])
-                st.caption("Live mode excludes the still-open five-minute bar and uses strictly backward OI alignment.")
+                if _is_delayed_archive(active_meta):
+                    st.caption(
+                        "Archive fallback uses official Binance daily files and remains strictly backward-only for OI. "
+                        "The completed-through timestamp above is the authoritative freshness marker."
+                    )
+                else:
+                    st.caption("Recent mode excludes the still-open five-minute bar and uses strictly backward OI alignment.")
     with research_tab:
         cols = st.columns(6)
         metrics = (
@@ -87,7 +105,7 @@ def _render_dashboard(active_derived, active_meta, active_error, timezone, scope
             col.metric(label, value)
         st.subheader("Pre-specified candidate")
         st.markdown("**High Effort / High Result × Short Covering** — tracked across 30 days and 12 months.")
-        st.plotly_chart(candidate_chart(candidate), use_container_width=True)
+        st.plotly_chart(candidate_chart(candidate), width="stretch")
         st.caption("The bundled audited benchmark was calculated at H=5/10/20 only. H=15/30/60 are never interpolated; use an active dataset to compute all six horizons.")
 
 
@@ -102,7 +120,10 @@ def _render_validation(active_derived, active_meta, active_source_label, config,
         summary = calculate_validation(active_derived, config, non_overlap)
         st.caption("Recomputed horizons: 5 / 10 / 15 / 20 / 30 / 60 bars (25 / 50 / 75 / 100 / 150 / 300 minutes on 5m data).")
         if active_meta is not None:
-            st.info("Live validation uses only the recent cached window and is exploratory. Use the 12-month snapshot or a long uploaded dataset for research conclusions.")
+            if _is_delayed_archive(active_meta):
+                st.info("Archive-fallback validation is based on a short delayed window and is exploratory. Use the 12-month snapshot or a long uploaded dataset for research conclusions.")
+            else:
+                st.info("Recent validation uses only the short cached window and is exploratory. Use the 12-month snapshot or a long uploaded dataset for research conclusions.")
     else:
         summary = snapshot_validation.copy()
         st.caption("BTCUSDT 5m · 2025-09-01 → 2026-08-31 · non-overlapping audited snapshot · available horizons: 5 / 10 / 20 bars.")
@@ -129,7 +150,7 @@ def _render_validation(active_derived, active_meta, active_source_label, config,
     if filtered.empty:
         st.warning("No rows match the current filters.")
         return
-    st.plotly_chart(validation_chart(filtered, ranking), use_container_width=True)
+    st.plotly_chart(validation_chart(filtered, ranking), width="stretch")
     columns = ["Group Type", "Group", "Positioning State", "Event Direction", "Horizon", "Raw N",
                "Non-Overlapping N", "Mean Forward ATR", "Forward ATR 25th Percentile",
                "Forward ATR 50th Percentile", "Forward ATR 75th Percentile", "Positive Rate",
@@ -137,7 +158,7 @@ def _render_validation(active_derived, active_meta, active_source_label, config,
                "Difference vs Baseline ATR 95% CI Low", "Difference vs Baseline ATR 95% CI High",
                "Mean vs Median Divergence Warning", "Tail-Driven Result Warning", "Sample Quality"]
     available = [c for c in columns if c in filtered.columns]
-    st.dataframe(filtered[available], hide_index=True, use_container_width=True, height=520)
+    st.dataframe(filtered[available], hide_index=True, width="stretch", height=520)
     st.download_button("Download filtered validation CSV", filtered.to_csv(index=False).encode("utf-8"),
                        file_name="validation_filtered.csv", mime="text/csv")
 
@@ -147,34 +168,41 @@ def run() -> None:
     st.markdown("""<style>.stApp{background-color:#0F0F0F}[data-testid="stMetric"]{background:#151515;border:1px solid #2B2B2B;padding:.8rem}.block-container{padding-top:1.6rem;padding-bottom:3rem}</style>""", unsafe_allow_html=True)
     report, candidate, snapshot_validation = load_snapshot()
     scope, dataset = report.get("scope", {}), report.get("dataset", {})
-    st.title("Market State Explorer v1.0 — Production Web Edition")
-    st.caption("Effort × Result × Positioning research with official Binance recent-data refresh. Descriptive research, not a trading signal.")
+    st.title("Market State Explorer v1.0.1 — Hosted Compatibility")
+    st.caption("Effort × Result × Positioning research with official Binance data. Descriptive research, not a trading signal.")
 
     with st.sidebar:
         st.header("Explorer")
         section = st.radio("Section", ("Dashboard", "State Map", "Trajectory", "Validation", "Data Quality", "Methodology"))
         st.divider()
-        data_source = st.radio("Active dataset", ("Live Binance", "Upload CSV"))
+        data_source = st.radio("Active dataset", ("Binance Recent", "Upload CSV"))
         upload = st.file_uploader("Upload research CSV", type=["csv"], help="Required: timestamp, open, high, low, close, volume, delta, oi.") if data_source == "Upload CSV" else None
         timezone = st.selectbox("Display Timezone", ("Asia/Taipei", "UTC", "America/New_York", "Europe/London"))
         display_history = st.number_input("State Map history", 50, 5000, 500)
         trail_length = st.number_input("Trajectory length", 2, 500, 50)
-        if data_source == "Live Binance":
-            if st.button("Refresh live data", use_container_width=True):
+        if data_source == "Binance Recent":
+            if st.button("Refresh Binance data", width="stretch"):
                 load_live_dataset.clear(); st.rerun()
-            st.caption("Recent official data are shared-cached for 5 minutes to protect free hosting.")
+            st.caption("Official data are cached for 5 minutes. If Binance futures REST is restricted from the host, the app automatically uses a clearly labelled delayed daily-archive fallback.")
         st.caption("State-model parameters remain fixed to the audited v0.1.2 defaults. Web validation horizons are 5/10/15/20/30/60 bars.")
 
     config = ModelConfig(display_timezone=timezone, display_history=int(display_history),
                          trail_length=int(trail_length), forward_horizons=WEB_FORWARD_HORIZONS)
     active_derived = None; active_quality = None; active_meta = None; active_error = None
     active_source_label = data_source
-    if data_source == "Live Binance" and section != "Methodology":
+    if data_source == "Binance Recent" and section != "Methodology":
         try:
             active_derived, active_quality, active_meta = load_live_dataset(config)
-            st.sidebar.success(f"Live · {len(active_derived):,} rows · OI {active_meta.oi_coverage:.2%}")
+            if _is_delayed_archive(active_meta):
+                active_source_label = "Binance official archive fallback (delayed)"
+                st.sidebar.warning(
+                    f"Archive fallback · {len(active_derived):,} rows · OI {active_meta.oi_coverage:.2%}"
+                )
+            else:
+                active_source_label = "Binance recent REST/archive"
+                st.sidebar.success(f"Recent · {len(active_derived):,} rows · OI {active_meta.oi_coverage:.2%}")
         except Exception as exc:
-            active_error = str(exc); st.sidebar.warning("Live source temporarily unavailable")
+            active_error = str(exc); st.sidebar.warning("Binance source temporarily unavailable")
     elif data_source == "Upload CSV" and upload is not None:
         try:
             active_derived, active_quality = calculate_uploaded(upload.getvalue(), config)
@@ -187,45 +215,49 @@ def run() -> None:
     elif section == "State Map":
         st.header("Effort–Result State Map")
         if active_derived is None:
-            st.info(active_error or "Choose Live Binance or upload a valid research CSV.")
+            st.info(active_error or "Choose Binance Recent or upload a valid research CSV.")
         else:
+            if _is_delayed_archive(active_meta):
+                st.warning("This state map is based on the delayed official archive fallback; check the completed-through timestamp before interpreting it.")
             show_current_state(active_derived, timezone)
-            st.plotly_chart(state_map_figure(active_derived, history=config.display_history, timezone=config.display_timezone), use_container_width=True, config={"displaylogo": False, "scrollZoom": True})
+            st.plotly_chart(state_map_figure(active_derived, history=config.display_history, timezone=config.display_timezone), width="stretch", config={"displaylogo": False, "scrollZoom": True})
     elif section == "Trajectory":
         st.header("State Trajectory")
         if active_derived is None:
-            st.info(active_error or "Choose Live Binance or upload a valid research CSV.")
+            st.info(active_error or "Choose Binance Recent or upload a valid research CSV.")
         else:
+            if _is_delayed_archive(active_meta):
+                st.warning("This trajectory is delayed because the hosted app is using official daily archives rather than futures REST.")
             usable = active_derived.dropna(subset=["effort_score", "result_score"])
             if len(usable) < 2:
                 st.warning("At least two usable states are required.")
             else:
                 n = st.slider("N states", 2, min(500, len(usable)), min(config.trail_length, len(usable)))
-                st.plotly_chart(trajectory_figure(active_derived, trail_length=n, timezone=config.display_timezone), use_container_width=True, config={"displaylogo": False, "scrollZoom": True})
+                st.plotly_chart(trajectory_figure(active_derived, trail_length=n, timezone=config.display_timezone), width="stretch", config={"displaylogo": False, "scrollZoom": True})
     elif section == "Validation":
         _render_validation(active_derived, active_meta, active_source_label, config, snapshot_validation)
     elif section == "Data Quality":
         st.header("Data Quality")
         if active_derived is None or active_quality is None:
-            st.info(active_error or "Choose Live Binance or upload a research CSV for row-level checks.")
+            st.info(active_error or "Choose Binance Recent or upload a research CSV for row-level checks.")
         else:
             show_quality(active_quality)
             if active_meta is not None:
                 st.subheader("Official-source audit")
                 meta = active_meta.as_dict()
                 keys = ("source", "requested_start", "requested_end", "as_of_utc", "completed_through_utc", "rows", "oi_coverage", "missing_oi_rows", "stale_oi_rows", "future_oi_matches", "cache_hits", "downloads", "missing_kline_dates", "missing_oi_dates")
-                st.dataframe(pd.DataFrame({"Metric": keys, "Value": [str(meta[k]) for k in keys]}), hide_index=True, use_container_width=True)
+                st.dataframe(pd.DataFrame({"Metric": keys, "Value": [str(meta[k]) for k in keys]}), hide_index=True, width="stretch")
             flagged = active_derived[active_derived["data_quality_flag"].ne("")][["timestamp", "data_quality_flag"]]
             if flagged.empty:
                 st.success("No row-level Explorer data-quality flags were detected.")
             else:
-                st.dataframe(flagged, hide_index=True, use_container_width=True)
+                st.dataframe(flagged, hide_index=True, width="stretch")
     else:
         st.header("Methodology & Guardrails")
-        st.markdown("""**Effort** measures unusual participation from robustly normalized log Volume.\n\n**Result** measures ATR-normalized price displacement and directional efficiency.\n\n**Positioning** combines price, Delta/Volume, and Open Interest significance; ambiguous combinations remain **Mixed / Low Conviction**.\n\n**Live mode** uses official Binance USDⓈ-M public archive/REST data, reconstructs Delta from taker-buy volume, aligns OI strictly backward, excludes the still-open 5m bar, and shares a five-minute cache.\n\n**Validation** uses 5/10/15/20/30/60-bar horizons for active datasets. The bundled 12-month audited snapshot remains 5/10/20 because those were the horizons actually computed when frozen.""")
+        st.markdown("""**Effort** measures unusual participation from robustly normalized log Volume.\n\n**Result** measures ATR-normalized price displacement and directional efficiency.\n\n**Positioning** combines price, Delta/Volume, and Open Interest significance; ambiguous combinations remain **Mixed / Low Conviction**.\n\n**Binance Recent** first requests official Binance USDⓈ-M recent data, reconstructs Delta from taker-buy volume, aligns OI strictly backward, and excludes the still-open 5m bar. If the hosting region receives Binance HTTP 451, the public app falls back to official daily archives ending several UTC days earlier. The fallback is explicitly labelled delayed and is never presented as live/current data.\n\n**Validation** uses 5/10/15/20/30/60-bar horizons for active datasets. The bundled 12-month audited snapshot remains 5/10/20 because those were the horizons actually computed when frozen.""")
         st.caption("Rolling normalization is past-only: the current observation is excluded from its own historical reference window.")
 
     if active_derived is not None:
         st.sidebar.download_button("Download derived_features.csv", active_derived.to_csv(index=False).encode("utf-8"), file_name="derived_features.csv", mime="text/csv")
     st.divider()
-    st.caption("Visualization ≠ Edge · Correlation ≠ Causation · State Classification ≠ Trade Signal · v1.0")
+    st.caption("Visualization ≠ Edge · Correlation ≠ Causation · State Classification ≠ Trade Signal · v1.0.1")
