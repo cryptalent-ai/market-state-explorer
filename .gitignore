@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.streamlit/secrets.toml
+derived_features.csv
+validation_summary.csv
+data/raw/
+data/processed/
+data/metadata/

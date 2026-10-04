@@ -1,0 +1,28 @@
+{
+  "release": "0.1.3-web-bundled-snapshot",
+  "scope": {
+    "exchange": "Binance USDT-M",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m",
+    "start": "2025-09-01",
+    "end": "2026-08-31",
+    "non_overlapping": true,
+    "thresholds": "Unchanged ModelConfig defaults"
+  },
+  "dataset": {
+    "status": "USABLE_WITH_WARNINGS",
+    "rows": 105120,
+    "kline_coverage": 1.0,
+    "oi_coverage": 0.9999809741248098,
+    "missing_klines": 0,
+    "missing_oi": 2,
+    "future_oi_matches": 0,
+    "invalid_delta_rows": 0,
+    "detected_gaps": 0,
+    "segments": 1,
+    "processed_path": "Not bundled in the public web edition",
+    "metadata_path": "Not bundled in the public web edition",
+    "cache_hits": 61,
+    "downloads": 670
+  }
+}
