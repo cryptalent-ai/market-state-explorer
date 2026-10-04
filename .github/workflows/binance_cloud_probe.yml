@@ -8,28 +8,37 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
-      - name: Probe Binance USD-M public endpoints and archive
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install runtime dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Confirm REST restriction and archive availability
         shell: bash
         run: |
           set -u
-          probe() {
-            name="$1"
-            url="$2"
-            code=$(curl -L -sS -o /tmp/body.bin -w '%{http_code}' --max-time 20 "$url" || true)
-            size=$(wc -c </tmp/body.bin 2>/dev/null || echo 0)
-            echo "===== $name HTTP $code bytes=$size ====="
-            if [ "$size" -lt 800 ]; then
-              head -c 700 /tmp/body.bin || true
-              echo
-            fi
-          }
-          probe fapi 'https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=5m&limit=2'
-          probe fapi1 'https://fapi1.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=5m&limit=2'
-          probe fapi2 'https://fapi2.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=5m&limit=2'
-          probe fapi3 'https://fapi3.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=5m&limit=2'
-          probe fapi4 'https://fapi4.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=5m&limit=2'
-          probe oi 'https://fapi.binance.com/futures/data/openInterestHist?symbol=BTCUSDT&period=5m&limit=2'
-          probe archive_kline 'https://data.binance.vision/data/futures/um/daily/klines/BTCUSDT/5m/BTCUSDT-5m-2026-08-31.zip'
-          probe archive_oi 'https://data.binance.vision/data/futures/um/daily/metrics/BTCUSDT/BTCUSDT-metrics-2026-08-31.zip'
+          code=$(curl -sS -o /tmp/rest.txt -w '%{http_code}' --max-time 20 'https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=5m&limit=2' || true)
+          echo "fapi HTTP $code"
+          cat /tmp/rest.txt || true
+          archive=$(curl -L -sS -o /tmp/archive.zip -w '%{http_code}' --max-time 20 'https://data.binance.vision/data/futures/um/daily/klines/BTCUSDT/5m/BTCUSDT-5m-2026-08-31.zip' || true)
+          echo "archive HTTP $archive bytes=$(wc -c </tmp/archive.zip)"
+          test "$archive" = "200"
+      - name: Exercise Market State Explorer hosted fallback
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from tempfile import TemporaryDirectory
+          from src.live_data import build_recent_market_data
+
+          with TemporaryDirectory() as tmp:
+              market, metadata = build_recent_market_data(cache_root=Path(tmp))
+              print(metadata.as_dict())
+              print(market.frame.tail(3)[['timestamp','close','oi']])
+              assert 'delayed hosted fallback' in metadata.source
+              assert metadata.rows >= 1000
+              assert metadata.future_oi_matches == 0
+              assert metadata.oi_coverage > 0.99
+          PY
