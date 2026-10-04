@@ -1,4 +1,4 @@
-# Market State Explorer v1.0 — Production Web Edition
+# Market State Explorer v1.1 — Near-Real-Time Relay Edition
 
 Market State Explorer is an interpretable BTCUSDT 5-minute research dashboard built around three ideas:
 
@@ -6,25 +6,89 @@ Market State Explorer is an interpretable BTCUSDT 5-minute research dashboard bu
 - **Result** — how efficiently price actually displaced relative to ATR;
 - **Positioning** — how Price, Delta, and Open Interest line up.
 
-The app is descriptive research software. It does **not** generate BUY/SELL instructions, place orders, use authenticated account data, or claim causality.
+The app is descriptive research software. It does **not** generate BUY/SELL instructions, place orders, use authenticated trading-account data, or claim causality.
 
-## What v1.0 provides
+## What v1.1 adds
 
-The public Streamlit app combines:
+Streamlit Cloud may receive Binance Futures HTTP 451 because the hosted server is in a restricted region. v1.1 solves the freshness problem without using a proxy, VPN, or geo-bypass.
 
-- a **Live Binance** mode using official Binance USDⓈ-M public data with no API key;
-- a **Dashboard** with the latest completed market state;
-- **State Map** and **Trajectory** views;
+A lightweight **Local Relay** can run on the user's own Binance-accessible Windows machine. Every five minutes it:
+
+1. fetches official Binance USDⓈ-M public market data locally;
+2. excludes the still-open 5m bar;
+3. reconstructs Delta from taker-buy base volume;
+4. aligns Open Interest strictly backward;
+5. computes the unchanged audited Market State features locally;
+6. publishes only a compact compressed **derived-state snapshot** to one public GitHub issue comment.
+
+The public Streamlit site reads that comment without any secret. If no successful relay update arrives for 15 minutes, it is considered stale and is not presented as current.
+
+The public relay target is GitHub issue **#5** in this repository. It contains public derived market data only. Never place API keys, passwords, account information, or tokens in that issue.
+
+## Automatic source priority
+
+The default website source is:
+
+```text
+Auto (Relay → Archive)
+```
+
+Behavior:
+
+```text
+Fresh Local Relay available
+    → use near-real-time derived Market State
+
+Relay missing or stale
+    → use Binance hosted source
+    → if Binance Futures REST returns HTTP 451, use official delayed daily archives
+```
+
+The hosted archive fallback is always labelled as delayed and is never presented as the current market state.
+
+## One-time Windows relay setup
+
+Requirements: Windows, Python 3.12, internet access, and a GitHub account with write access to this repository.
+
+Open PowerShell and run the installer from the repository:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install_windows_relay.ps1
+```
+
+The installer:
+
+- checks Python 3.12;
+- installs GitHub CLI with `winget` if needed;
+- opens GitHub's normal browser authorization flow if `gh` is not already authenticated;
+- downloads the current `main` branch into `%LOCALAPPDATA%\MarketStateExplorerRelay`;
+- creates an isolated Python virtual environment;
+- performs one real relay publish test;
+- creates a Windows Scheduled Task named `MarketStateExplorerRelay` that runs every five minutes.
+
+To remove the task later:
+
+```powershell
+schtasks /Delete /TN MarketStateExplorerRelay /F
+```
+
+The local publisher is `scripts/publish_live_relay.py`.
+
+## Existing production features
+
+The public Streamlit app also provides:
+
+- **Dashboard** with the latest accepted market state;
+- **State Map** and **Trajectory**;
 - **Historical Forward Validation**;
-- **Data Quality** and official-source audit information;
-- **CSV upload** for your own compatible research data;
-- the frozen **12-month audited BTCUSDT 5m benchmark** from v0.1.2.
-
-Live mode uses a recent eight-day window, caches public-source data for five minutes, excludes the still-open 5m bar with a safety lag, reconstructs Delta from official taker-buy base volume, and aligns Open Interest strictly backward so future OI is never used for an earlier bar.
+- **Data Quality** and source/relay audit information;
+- **CSV upload** for compatible research data;
+- the frozen **12-month audited BTCUSDT 5m benchmark** from v0.1.2;
+- Binance official delayed archive fallback for hosts where Futures REST returns HTTP 451.
 
 ## Validation horizons
 
-Active datasets are evaluated at:
+Sufficiently long active datasets are evaluated at:
 
 ```text
 5 / 10 / 15 / 20 / 30 / 60 bars
@@ -36,11 +100,11 @@ For BTCUSDT 5m this corresponds to approximately:
 25 / 50 / 75 / 100 / 150 / 300 minutes
 ```
 
-The bundled 12-month audited snapshot intentionally remains limited to **5 / 10 / 20** because those were the horizons actually computed when that benchmark was frozen. v1.0 does not interpolate or fabricate 15/30/60 results for it.
+The compact near-real-time relay is intentionally **not** used for forward-validation claims. It exists for Current State, State Map, and Trajectory. The bundled 12-month audited snapshot remains limited to **5 / 10 / 20** because those were the horizons actually computed when that benchmark was frozen.
 
 ## Core model lock
 
-v1.0 preserves the audited v0.1.2 model mathematics. It does not change the existing Effort, Result, Positioning, normalization, Delta reconstruction, OI alignment, event definitions, or no-lookahead architecture.
+v1.1 preserves the audited v0.1.2 model mathematics. It does not change Effort, Result, Positioning, normalization, Delta reconstruction, OI alignment, event definitions, or the no-lookahead architecture.
 
 ### Effort
 
@@ -70,19 +134,18 @@ oi_log_change    = ln(oi[t] / oi[t-1])
 
 and classifies only sufficiently significant combinations. Ambiguous combinations remain **Mixed / Low Conviction**.
 
-## Live-data safeguards
+## Data safeguards
 
-The production live path uses only official Binance public sources. Important rules:
+Important rules:
 
 - only completed five-minute candles are admitted;
-- the current still-open bar is excluded;
+- the still-open bar is excluded;
 - Delta is reconstructed from official taker-buy base volume;
 - Open Interest is quantity-based and strictly backward aligned;
-- future OI matches are surfaced in Data Quality and must remain zero;
-- recent data are cached for five minutes to reduce repeated source traffic on free hosting;
-- live-source failures fail soft instead of crashing the whole research site.
-
-Live validation is intentionally labeled exploratory because the live window is short. Use the bundled 12-month benchmark or a longer uploaded dataset for research conclusions.
+- future OI matches must remain zero;
+- relay data are rejected as current after 15 minutes without a successful update;
+- the relay publisher refuses to publish if its own machine also falls back to delayed hosted archive data;
+- the public relay transports derived/public market data only, not account data or credentials.
 
 ## Input CSV contract
 
@@ -98,26 +161,9 @@ Required columns:
 
 The public site limits uploads to 60 MB and 150,000 rows to protect free-host resources.
 
-## Historical validation
+## Local development
 
-Validation reports sample size and forward behavior by Effort–Result region, Positioning State, Region × Positioning, and research events. Hardened v0.1.2 outputs include:
-
-- Mean / Median Forward ATR;
-- Forward ATR 25th / 50th / 75th percentiles;
-- Positive Rate;
-- MFE and MAE probabilities;
-- Baseline Mean ATR;
-- Mean ATR Difference vs Baseline;
-- Difference vs Baseline 95% CI;
-- Mean-vs-Median divergence warning;
-- Tail-driven result warning;
-- conservative sample-quality labels.
-
-Non-overlapping sampling is available so overlapping forward windows are not treated as independent observations.
-
-## Installation
-
-Python 3.12 is the supported deployment profile.
+Python 3.12 is the supported profile.
 
 ```bash
 python -m venv .venv
@@ -134,13 +180,9 @@ source .venv/bin/activate
 
 ## Automated verification
 
-GitHub Actions runs on pull requests and on pushes to `main` using Python 3.12. It installs the project, compiles `app.py`, `src`, and `tests`, then runs the full pytest suite.
+GitHub Actions runs on pull requests and pushes to `main` using Python 3.12. It compiles `app.py`, `src`, and `tests`, then runs the pytest suite. Relay tests verify compressed round-trip decoding, the 15-minute freshness rule, and rejection of future OI matches.
 
-The v1.0 live-data tests specifically verify that the current unfinished bar is excluded and that future Open Interest is never matched backward into the dataset.
-
-## Deployment
-
-For Streamlit Community Cloud:
+## Streamlit deployment
 
 ```text
 Repository: cryptalent-ai/market-state-explorer
@@ -148,8 +190,6 @@ Branch:     main
 Main file:  app.py
 Python:     3.12
 ```
-
-See `RELEASE_NOTES_v1.0.md` for the production-release summary.
 
 ## Interpretation guardrail
 
