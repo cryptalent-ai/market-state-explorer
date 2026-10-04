@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "market-state-explorer"
-version = "1.0.1"
-description = "Production web research for interpretable crypto market states and forward validation"
+version = "1.1.0"
+description = "Production web research for interpretable crypto market states with a near-real-time local relay"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
