@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "market-state-explorer"
-version = "0.1.4"
-description = "Interactive web research for interpretable market states and hardened validation"
+version = "0.1.5"
+description = "Interactive market-state research with expanded forward-validation horizons"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
