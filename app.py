@@ -1,30 +1,31 @@
+"""Market State Explorer v0.1.4 — Interactive Web Edition."""
 from __future__ import annotations
 
 import json
+from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from src.charts import state_map_figure, trajectory_figure
+from src.config import ModelConfig
+from src.data_io import DataValidationError, load_market_csv
+from src.features import build_derived_features
+from src.formatting import number
+from src.validation import build_validation_summary
+
 ROOT = Path(__file__).resolve().parent
-SNAPSHOT_DIR = ROOT / "analysis" / "v0.1.2"
+SNAPSHOT = ROOT / "analysis" / "v0.1.2"
 
-st.set_page_config(
-    page_title="Market State Explorer",
-    page_icon=None,
-    layout="wide",
-)
-
+st.set_page_config(page_title="Market State Explorer", page_icon=None, layout="wide")
 st.markdown(
     """
     <style>
     .stApp { background-color: #0F0F0F; }
-    [data-testid="stMetric"] {
-        background: #151515;
-        border: 1px solid #2B2B2B;
-        padding: 0.8rem;
-    }
+    [data-testid="stMetric"] {background:#151515;border:1px solid #2B2B2B;padding:.8rem;}
+    .block-container {padding-top:2rem;padding-bottom:3rem;}
     </style>
     """,
     unsafe_allow_html=True,
@@ -32,102 +33,220 @@ st.markdown(
 
 
 @st.cache_data(show_spinner=False)
-def load_snapshot() -> tuple[dict, pd.DataFrame]:
-    report = json.loads(
-        (SNAPSHOT_DIR / "v0.1.2_12month_report.json").read_text(encoding="utf-8")
-    )
-    candidate = pd.read_csv(SNAPSHOT_DIR / "candidate_30day_vs_12month.csv")
-    return report, candidate.sort_values("Horizon")
+def load_snapshot() -> tuple[dict, pd.DataFrame, pd.DataFrame]:
+    report = json.loads((SNAPSHOT / "v0.1.2_12month_report.json").read_text("utf-8"))
+    candidate = pd.read_csv(SNAPSHOT / "candidate_30day_vs_12month.csv").sort_values("Horizon")
+    validation = pd.read_csv(SNAPSHOT / "web_validation_core.csv")
+    return report, candidate, validation
 
 
 def candidate_chart(frame: pd.DataFrame) -> go.Figure:
-    figure = go.Figure()
+    fig = go.Figure()
     x = frame["Horizon"].astype(str)
     for label, suffix, color in (
         ("30-day", "30-Day", "#90A4AE"),
         ("12-month", "12-Month", "#FFD54F"),
     ):
-        mean_col = f"Mean ATR Difference vs Baseline {suffix}"
-        low_col = f"Difference vs Baseline ATR 95% CI Low {suffix}"
-        high_col = f"Difference vs Baseline ATR 95% CI High {suffix}"
-        means = frame[mean_col]
-        figure.add_trace(
-            go.Bar(
-                x=x,
-                y=means,
-                name=label,
-                marker={"color": color},
-                error_y={
-                    "type": "data",
-                    "symmetric": False,
-                    "array": (frame[high_col] - means).clip(lower=0),
-                    "arrayminus": (means - frame[low_col]).clip(lower=0),
-                    "visible": True,
-                },
-                hovertemplate=(
-                    f"{label}<br>Horizon: %{{x}} bars"
-                    "<br>Difference vs baseline: %{y:.3f} ATR<extra></extra>"
-                ),
-            )
+        mean = frame[f"Mean ATR Difference vs Baseline {suffix}"]
+        low = frame[f"Difference vs Baseline ATR 95% CI Low {suffix}"]
+        high = frame[f"Difference vs Baseline ATR 95% CI High {suffix}"]
+        fig.add_bar(
+            x=x,
+            y=mean,
+            name=label,
+            marker_color=color,
+            error_y=dict(
+                type="data",
+                symmetric=False,
+                array=(high - mean).clip(lower=0),
+                arrayminus=(mean - low).clip(lower=0),
+                visible=True,
+            ),
+            hovertemplate=f"{label}<br>Horizon: %{{x}} bars<br>Difference: %{{y:.3f}} ATR<extra></extra>",
         )
-    figure.add_hline(y=0, line_width=1.5, line_color="#8A8A8A")
-    figure.update_layout(
+    fig.add_hline(y=0, line_width=1.5, line_color="#8A8A8A")
+    fig.update_layout(
         title="Candidate Stability — Mean ATR Difference vs Baseline",
         paper_bgcolor="#0F0F0F",
         plot_bgcolor="#0F0F0F",
-        font={"color": "#E0E0E0"},
+        font_color="#E0E0E0",
         barmode="group",
-        margin={"l": 48, "r": 24, "t": 64, "b": 48},
         xaxis_title="Forward horizon (bars)",
         yaxis_title="Conditional mean − baseline mean (ATR)",
+        margin=dict(l=48, r=24, t=64, b=48),
     )
-    figure.update_xaxes(gridcolor="#2A2A2A")
-    figure.update_yaxes(gridcolor="#2A2A2A")
-    return figure
+    fig.update_xaxes(gridcolor="#2A2A2A")
+    fig.update_yaxes(gridcolor="#2A2A2A")
+    return fig
 
 
-st.title("Market State Explorer v0.1.3 — Web Preview")
+def validation_chart(frame: pd.DataFrame) -> go.Figure:
+    data = frame.dropna(subset=["Mean ATR Difference vs Baseline"]).copy()
+    if data.empty:
+        return go.Figure()
+    data["Label"] = (
+        data["Group"].astype(str)
+        + " · "
+        + data["Positioning State"].astype(str)
+        + " · H"
+        + data["Horizon"].astype(str)
+    )
+    data = data.sort_values("Mean ATR Difference vs Baseline", ascending=False).head(15)
+    fig = go.Figure(
+        go.Bar(
+            x=data["Mean ATR Difference vs Baseline"],
+            y=data["Label"],
+            orientation="h",
+            customdata=data[["Non-Overlapping N", "Sample Quality"]],
+            hovertemplate=(
+                "%{y}<br>Difference: %{x:.3f} ATR"
+                "<br>N: %{customdata[0]}"
+                "<br>%{customdata[1]}<extra></extra>"
+            ),
+        )
+    )
+    fig.add_vline(x=0, line_width=1.5, line_color="#8A8A8A")
+    fig.update_layout(
+        title="Largest displayed differences vs baseline",
+        paper_bgcolor="#0F0F0F",
+        plot_bgcolor="#0F0F0F",
+        font_color="#E0E0E0",
+        xaxis_title="Mean Forward ATR − Baseline Mean ATR",
+        yaxis_title=None,
+        height=max(440, min(760, 34 * len(data) + 160)),
+        margin=dict(l=24, r=24, t=60, b=40),
+    )
+    fig.update_xaxes(gridcolor="#2A2A2A")
+    fig.update_yaxes(autorange="reversed")
+    return fig
+
+
+def research_label(row: pd.Series) -> str:
+    labels = []
+    if bool(row.get("lehr_short_pressure", False)):
+        labels.append("LEHR Short Pressure")
+    if bool(row.get("lehr_long_pressure", False)):
+        labels.append("LEHR Long Pressure")
+    if bool(row.get("helr_event", False)):
+        labels.append("HELR Event")
+    return ", ".join(labels) if labels else "None"
+
+
+def show_quality(report: object) -> None:
+    values = report.as_dict()  # type: ignore[attr-defined]
+    st.dataframe(
+        pd.DataFrame(
+            {"Metric": values.keys(), "Value": [str(v) for v in values.values()]}
+        ),
+        hide_index=True,
+        use_container_width=True,
+    )
+
+
+@st.cache_data(show_spinner="Calculating past-only features...")
+def calculate_uploaded(csv_bytes: bytes, config: ModelConfig):
+    market = load_market_csv(BytesIO(csv_bytes))
+    derived = build_derived_features(market.frame, config)
+    market.quality.warmup_rows = int(
+        derived[["effort_score", "result_score"]].isna().any(axis=1).sum()
+    )
+    market.quality.usable_state_rows = int(
+        derived[["effort_score", "result_score"]].notna().all(axis=1).sum()
+    )
+    return derived, market.quality
+
+
+@st.cache_data(show_spinner="Calculating historical validation...")
+def calculate_validation(
+    derived: pd.DataFrame,
+    config: ModelConfig,
+    non_overlap: bool,
+) -> pd.DataFrame:
+    return build_validation_summary(
+        derived,
+        config,
+        non_overlapping=non_overlap,
+    )
+
+
+report, candidate, snapshot_validation = load_snapshot()
+scope, dataset = report.get("scope", {}), report.get("dataset", {})
+
+st.title("Market State Explorer v0.1.4 — Interactive Web Edition")
 st.caption(
-    "Historical Effort × Result × Positioning research. "
-    "State classification is descriptive and is not a trading signal."
+    "Historical Effort × Result × Positioning research. Descriptive research, not a trading signal."
 )
 
 with st.sidebar:
+    st.header("Explorer")
     section = st.radio(
         "Section",
-        ("Research Snapshot", "Methodology", "Explorer Roadmap"),
+        (
+            "Dashboard",
+            "State Map",
+            "Trajectory",
+            "Validation",
+            "Data Quality",
+            "Methodology",
+        ),
     )
-
-report, candidate = load_snapshot()
-scope = report.get("scope", {})
-dataset = report.get("dataset", {})
-
-if section == "Research Snapshot":
-    st.header("Research Snapshot")
+    st.divider()
+    upload = st.file_uploader(
+        "Upload research CSV",
+        type=["csv"],
+        help="Required: timestamp, open, high, low, close, volume, delta, oi.",
+    )
+    timezone = st.selectbox(
+        "Display Timezone",
+        ("Asia/Taipei", "UTC", "America/New_York", "Europe/London"),
+    )
+    display_history = st.number_input("State Map history", 50, 5000, 500)
+    trail_length = st.number_input("Trajectory length", 2, 500, 50)
     st.caption(
-        "Read-only 12-month BTCUSDT 5m validation snapshot bundled for the "
-        "first public deployment."
+        "Quant model parameters are fixed to the audited v0.1.2 defaults on the public site."
     )
 
+config = ModelConfig(
+    display_timezone=timezone,
+    display_history=int(display_history),
+    trail_length=int(trail_length),
+)
+derived: pd.DataFrame | None = None
+quality = None
+if upload is not None:
+    try:
+        derived, quality = calculate_uploaded(upload.getvalue(), config)
+        st.sidebar.success(
+            f"{quality.rows_loaded:,} rows · {quality.usable_state_rows:,} usable states"
+        )
+    except DataValidationError as exc:
+        st.sidebar.error("Uploaded CSV failed validation.")
+        if section not in {"Dashboard", "Validation", "Methodology"}:
+            st.error(str(exc))
+            if exc.report is not None:
+                show_quality(exc.report)
+            st.stop()
+
+
+if section == "Dashboard":
+    st.header("12-Month Research Snapshot")
     cols = st.columns(6)
-    values = (
+    metrics = (
         ("Market", f"{scope.get('symbol', 'BTCUSDT')} · {scope.get('timeframe', '5m')}"),
-        ("Research Period", f"{scope.get('start', '—')} → {scope.get('end', '—')}"),
+        ("Period", f"{scope.get('start', '—')} → {scope.get('end', '—')}"),
         ("Bars", f"{int(dataset.get('rows', 0)):,}"),
-        ("Kline Coverage", f"{float(dataset.get('kline_coverage', 0.0)):.2%}"),
-        ("OI Coverage", f"{float(dataset.get('oi_coverage', 0.0)):.2%}"),
+        ("Kline Coverage", f"{float(dataset.get('kline_coverage', 0)):.2%}"),
+        ("OI Coverage", f"{float(dataset.get('oi_coverage', 0)):.2%}"),
         ("Future OI Matches", f"{int(dataset.get('future_oi_matches', 0)):,}"),
     )
-    for col, (label, value) in zip(cols, values):
+    for col, (label, value) in zip(cols, metrics):
         col.metric(label, value)
 
     st.subheader("Pre-specified candidate")
     st.markdown(
-        "**High Effort / High Result × Short Covering** — retained as a research "
-        "candidate after expanding from a 30-day sample to 12 months."
+        "**High Effort / High Result × Short Covering** — tracked across 30 days and 12 months."
     )
     st.plotly_chart(candidate_chart(candidate), use_container_width=True)
-
     table = pd.DataFrame(
         {
             "Horizon": candidate["Horizon"].astype(int),
@@ -147,37 +266,194 @@ if section == "Research Snapshot":
         }
     )
     st.dataframe(table, hide_index=True, use_container_width=True)
-
     st.info(
-        "The 5-bar and 20-bar 12-month difference intervals are above zero in "
-        "this historical sample. The 10-bar interval crosses zero and is "
-        "tail-sensitive. This is a robustness observation, not proof of edge."
+        "5-bar and 20-bar difference intervals were above zero in this historical sample; "
+        "10-bar crossed zero and was tail-sensitive. This is not proof of edge."
     )
 
-    st.download_button(
-        "Download 30-day vs 12-month comparison",
-        candidate.to_csv(index=False).encode("utf-8"),
-        file_name="candidate_30day_vs_12month.csv",
-        mime="text/csv",
-    )
+elif section == "State Map":
+    st.header("Effort–Result State Map")
+    if derived is None:
+        st.info(
+            "Upload a valid research CSV in the sidebar. The public site intentionally "
+            "does not bundle the 105,120-bar raw dataset."
+        )
+    else:
+        usable = derived.dropna(subset=["effort_score", "result_score"])
+        if usable.empty:
+            st.warning("No usable state rows after the warm-up period.")
+        else:
+            current = usable.iloc[-1]
+            cols = st.columns(7)
+            values = (
+                ("Effort", number(current["effort_score"], 2, True)),
+                ("Result", number(current["result_score"], 2, True)),
+                ("Region", str(current["effort_result_region"])),
+                ("Positioning", str(current["positioning_state"])),
+                ("Strength", number(current["state_strength"], 2)),
+                ("Velocity", number(current["state_velocity"], 2)),
+                ("Research", research_label(current)),
+            )
+            for col, (label, value) in zip(cols, values):
+                col.metric(label, value)
+            st.plotly_chart(
+                state_map_figure(
+                    derived,
+                    history=config.display_history,
+                    timezone=config.display_timezone,
+                ),
+                use_container_width=True,
+                config={"displaylogo": False, "scrollZoom": True},
+            )
+            if bool(current["near_state_boundary"]):
+                st.warning(
+                    "Current observation is near a zero boundary; treat its region assignment as low confidence."
+                )
 
-elif section == "Methodology":
+elif section == "Trajectory":
+    st.header("State Trajectory")
+    if derived is None:
+        st.info("Upload a valid research CSV in the sidebar to calculate trajectory.")
+    else:
+        usable = derived.dropna(subset=["effort_score", "result_score"])
+        if len(usable) < 2:
+            st.warning("At least two usable states are required.")
+        else:
+            n = st.slider(
+                "N states",
+                2,
+                min(500, len(usable)),
+                min(config.trail_length, len(usable)),
+            )
+            st.plotly_chart(
+                trajectory_figure(
+                    derived,
+                    trail_length=n,
+                    timezone=config.display_timezone,
+                ),
+                use_container_width=True,
+                config={"displaylogo": False, "scrollZoom": True},
+            )
+            st.caption(
+                "Velocity and acceleration are diagnostics only; v0.1.x derives no trading rule from them."
+            )
+
+elif section == "Validation":
+    st.header("Historical Forward Validation")
+    sources = ["12-month bundled snapshot"] + (
+        ["Uploaded CSV — calculate now"] if derived is not None else []
+    )
+    source = st.radio("Validation source", sources, horizontal=True)
+    if source.startswith("Uploaded"):
+        non_overlap = st.toggle("Non-Overlapping", value=True)
+        summary = calculate_validation(derived, config, non_overlap)  # type: ignore[arg-type]
+    else:
+        summary = snapshot_validation.copy()
+        st.caption(
+            "BTCUSDT 5m · 2025-09-01 → 2026-08-31 · non-overlapping validation snapshot."
+        )
+
+    c1, c2, c3 = st.columns(3)
+    horizons = c1.multiselect(
+        "Horizon",
+        sorted(summary["Horizon"].astype(int).unique()),
+        default=sorted(summary["Horizon"].astype(int).unique()),
+    )
+    groups_all = sorted(summary["Group Type"].dropna().astype(str).unique())
+    groups = c2.multiselect("Validation Group", groups_all, default=groups_all)
+    quality_all = sorted(summary["Sample Quality"].dropna().astype(str).unique())
+    qualities = c3.multiselect(
+        "Sample Quality",
+        quality_all,
+        default=quality_all,
+    )
+    text = st.text_input(
+        "Filter group / positioning text",
+        placeholder="e.g. Short Covering, High Effort / High Result",
+    ).strip().lower()
+
+    filtered = summary[
+        summary["Horizon"].astype(int).isin(horizons)
+        & summary["Group Type"].isin(groups)
+        & summary["Sample Quality"].isin(qualities)
+    ].copy()
+    if text:
+        haystack = (
+            filtered["Group"].fillna("").astype(str)
+            + " "
+            + filtered["Positioning State"].fillna("").astype(str)
+            + " "
+            + filtered["Group Type"].fillna("").astype(str)
+        ).str.lower()
+        filtered = filtered[haystack.str.contains(text, regex=False)]
+
+    st.metric("Displayed rows", f"{len(filtered):,}")
+    if filtered.empty:
+        st.warning("No rows match the current filters.")
+    else:
+        st.plotly_chart(validation_chart(filtered), use_container_width=True)
+        columns = [
+            "Group Type",
+            "Group",
+            "Positioning State",
+            "Event Direction",
+            "Horizon",
+            "Raw N",
+            "Non-Overlapping N",
+            "Mean Forward ATR",
+            "Forward ATR 25th Percentile",
+            "Forward ATR 50th Percentile",
+            "Forward ATR 75th Percentile",
+            "Positive Rate",
+            "Baseline Mean ATR",
+            "Mean ATR Difference vs Baseline",
+            "Difference vs Baseline ATR 95% CI Low",
+            "Difference vs Baseline ATR 95% CI High",
+            "Mean vs Median Divergence Warning",
+            "Tail-Driven Result Warning",
+            "Sample Quality",
+        ]
+        st.dataframe(
+            filtered[columns],
+            hide_index=True,
+            use_container_width=True,
+            height=520,
+        )
+        st.download_button(
+            "Download filtered validation CSV",
+            filtered.to_csv(index=False).encode("utf-8"),
+            file_name="validation_filtered.csv",
+            mime="text/csv",
+        )
+
+elif section == "Data Quality":
+    st.header("Data Quality")
+    if derived is None or quality is None:
+        st.info(
+            "Upload a research CSV for row-level checks. The bundled 12-month build had "
+            "100% Kline coverage, 99.998% OI coverage, zero invalid Delta rows, and zero future OI matches."
+        )
+    else:
+        show_quality(quality)
+        flagged = derived[derived["data_quality_flag"].ne("")][
+            ["timestamp", "data_quality_flag"]
+        ]
+        if flagged.empty:
+            st.success("No row-level Explorer data-quality flags were detected.")
+        else:
+            st.dataframe(flagged, hide_index=True, use_container_width=True)
+
+else:
     st.header("Methodology")
     st.markdown(
         """
-**Effort** asks how unusual current participation is. v0.1.x uses robustly
-normalized log Volume and deliberately keeps Open Interest and signed Delta out
-of Effort.
+**Effort** asks how unusual current participation is. It uses robustly normalized log Volume and keeps OI and signed Delta out of Effort.
 
-**Result** asks how much effective price displacement that participation produced.
-It combines ATR-normalized candle-body displacement with directional efficiency.
+**Result** measures effective price displacement using ATR-normalized candle-body displacement and directional efficiency.
 
-**Positioning** interprets the joint sign and significance of close-to-close price
-change, Delta/Volume, and Open Interest change. Small or ambiguous combinations
-remain **Mixed / Low Conviction** rather than being forced into a narrative.
+**Positioning** interprets the joint sign/significance of close-to-close price change, Delta/Volume, and OI change. Ambiguous combinations remain **Mixed / Low Conviction**.
 
-**Historical Validation** then asks what happened 5, 10, and 20 bars later and
-compares conditional outcomes with an unconditional baseline.
+**Validation** compares 5/10/20-bar conditional outcomes with an unconditional baseline and surfaces sample size, percentiles, confidence intervals, and tail warnings.
         """
     )
     st.code(
@@ -187,32 +463,18 @@ compares conditional outcomes with an unconditional baseline.
         language="text",
     )
     st.caption(
-        "Rolling normalization is past-only: the current observation is excluded "
-        "from its own historical reference window."
+        "Rolling normalization is past-only: the current observation is excluded from its own historical reference window."
     )
 
-else:
-    st.header("Explorer Roadmap")
-    st.markdown(
-        """
-This first public deployment is intentionally lightweight for free hosting.
-The validated local research engine already supports:
-
-- Effort × Result State Map
-- Positioning classification from Price × Delta × Open Interest
-- State Trajectory
-- Historical Forward Validation
-- Data Quality diagnostics
-- Native Binance BTCUSDT 5m Data Builder
-- CSV upload and exports
-
-The next web step is to enable those interactive research pages after this
-public snapshot is confirmed stable on the free host.
-        """
+if derived is not None:
+    st.sidebar.download_button(
+        "Download derived_features.csv",
+        derived.to_csv(index=False).encode("utf-8"),
+        file_name="derived_features.csv",
+        mime="text/csv",
     )
 
 st.divider()
 st.caption(
-    "Visualization ≠ Edge · Correlation ≠ Causation · "
-    "State Classification ≠ Trade Signal"
+    "Visualization ≠ Edge · Correlation ≠ Causation · State Classification ≠ Trade Signal"
 )
