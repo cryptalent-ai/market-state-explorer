@@ -1,0 +1,29 @@
+name: Binance Cloud Probe
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe Binance USD-M public endpoints
+        shell: bash
+        run: |
+          set -u
+          probe() {
+            name="$1"
+            url="$2"
+            code=$(curl -sS -o /tmp/body.txt -w '%{http_code}' --max-time 20 "$url" || true)
+            echo "$name HTTP $code"
+            head -c 400 /tmp/body.txt || true
+            echo
+            if [ "$code" != "200" ]; then
+              exit 1
+            fi
+          }
+          probe klines 'https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=5m&limit=2'
+          probe open_interest 'https://fapi.binance.com/futures/data/openInterestHist?symbol=BTCUSDT&period=5m&limit=2'
