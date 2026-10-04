@@ -10,20 +10,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Probe Binance USD-M public endpoints
+      - name: Probe Binance USD-M public endpoints and archive
         shell: bash
         run: |
           set -u
-          failed=0
           probe() {
             name="$1"
             url="$2"
-            code=$(curl -sS -o /tmp/body.txt -w '%{http_code}' --max-time 20 "$url" || true)
-            echo "===== $name HTTP $code ====="
-            head -c 400 /tmp/body.txt || true
-            echo
-            if [ "$code" != "200" ]; then
-              failed=1
+            code=$(curl -L -sS -o /tmp/body.bin -w '%{http_code}' --max-time 20 "$url" || true)
+            size=$(wc -c </tmp/body.bin 2>/dev/null || echo 0)
+            echo "===== $name HTTP $code bytes=$size ====="
+            if [ "$size" -lt 800 ]; then
+              head -c 700 /tmp/body.bin || true
+              echo
             fi
           }
           probe fapi 'https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=5m&limit=2'
@@ -32,4 +31,5 @@ jobs:
           probe fapi3 'https://fapi3.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=5m&limit=2'
           probe fapi4 'https://fapi4.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=5m&limit=2'
           probe oi 'https://fapi.binance.com/futures/data/openInterestHist?symbol=BTCUSDT&period=5m&limit=2'
-          exit "$failed"
+          probe archive_kline 'https://data.binance.vision/data/futures/um/daily/klines/BTCUSDT/5m/BTCUSDT-5m-2026-08-31.zip'
+          probe archive_oi 'https://data.binance.vision/data/futures/um/daily/metrics/BTCUSDT/BTCUSDT-metrics-2026-08-31.zip'
