@@ -14,16 +14,22 @@ jobs:
         shell: bash
         run: |
           set -u
+          failed=0
           probe() {
             name="$1"
             url="$2"
             code=$(curl -sS -o /tmp/body.txt -w '%{http_code}' --max-time 20 "$url" || true)
-            echo "$name HTTP $code"
+            echo "===== $name HTTP $code ====="
             head -c 400 /tmp/body.txt || true
             echo
             if [ "$code" != "200" ]; then
-              exit 1
+              failed=1
             fi
           }
-          probe klines 'https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=5m&limit=2'
-          probe open_interest 'https://fapi.binance.com/futures/data/openInterestHist?symbol=BTCUSDT&period=5m&limit=2'
+          probe fapi 'https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=5m&limit=2'
+          probe fapi1 'https://fapi1.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=5m&limit=2'
+          probe fapi2 'https://fapi2.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=5m&limit=2'
+          probe fapi3 'https://fapi3.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=5m&limit=2'
+          probe fapi4 'https://fapi4.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=5m&limit=2'
+          probe oi 'https://fapi.binance.com/futures/data/openInterestHist?symbol=BTCUSDT&period=5m&limit=2'
+          exit "$failed"
