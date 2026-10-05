@@ -208,9 +208,9 @@ source .venv/bin/activate
 
 ## Automated verification
 
-GitHub Actions runs on pull requests and pushes to `main` using Python 3.12. It compiles `app.py`, `src`, and `tests`, then runs the pytest suite. Relay tests verify compressed round-trip decoding, the 15-minute freshness rule, and rejection of future OI matches.
+GitHub Actions runs on pull requests and pushes to `main` or `v1.3-decision-ui` using Python 3.12. It compiles `app.py`, `src`, and `tests`, then runs the pytest suite. Relay tests verify compressed round-trip decoding, the 15-minute freshness rule, and rejection of future OI matches.
 
-## Streamlit deployment
+## Preserved production deployment (do not change for preview)
 
 ```text
 Repository: cryptalent-ai/market-state-explorer
