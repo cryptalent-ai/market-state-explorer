@@ -26,11 +26,26 @@ from tests.conftest import fixed_market_frame
 ROOT = Path(__file__).parents[1]
 BASELINE = json.loads((ROOT / "tests/fixtures/v121_baseline.json").read_text("utf-8"))
 VALUES = json.loads(zlib.decompress(base64.b64decode(BASELINE["zlib_base64"])))
+HOTFIX_HASHES = json.loads((ROOT / "tests/fixtures/v131_source_sha256.json").read_text("utf-8"))
+# Only these source-orchestration files are authorized to change in v1.3.1.
+# The original quantitative numeric fixture and all other source pins stay intact.
+AUTHORIZED_FRESHNESS_FILES = {"src/relay.py", "src/providers/binance_usdm.py"}
 
 
 @pytest.mark.parametrize("path,expected", BASELINE["source_sha256"].items())
 def test_frozen_model_and_source_files(path, expected):
+    if path in AUTHORIZED_FRESHNESS_FILES:
+        expected = HOTFIX_HASHES[path]
     assert hashlib.sha256((ROOT/path).read_bytes().replace(b"\r\n", b"\n")).hexdigest() == expected
+
+
+@pytest.mark.parametrize("path", ["src/state_views.py", "src/charts_v13.py", "src/web_app_v13.py"])
+def test_v13_accepted_ui_is_byte_unchanged(path):
+    assert hashlib.sha256((ROOT/path).read_bytes().replace(b"\r\n", b"\n")).hexdigest() == HOTFIX_HASHES[path]
+
+
+def test_hotfix_source_pin_scope_is_explicit():
+    assert set(HOTFIX_HASHES) == AUTHORIZED_FRESHNESS_FILES | {"src/state_views.py", "src/charts_v13.py", "src/web_app_v13.py"}
 
 
 def assert_baseline(actual, baseline):

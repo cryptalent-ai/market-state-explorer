@@ -270,6 +270,16 @@ class BinanceUSDMProvider(MarketDataProvider):
         self.http = http or ReliableHttpClient()
         self.now = now or (lambda: datetime.now(timezone.utc))
 
+    def _refresh_rest_day(self, day: date) -> bool:
+        """Current/previous UTC dates may still have partial REST snapshots.
+
+        Archive selection always happens first. Once an official archive is
+        available, its immutable checksum cache remains the preferred source.
+        """
+        clock = pd.Timestamp(self.now())
+        clock = clock.tz_localize("UTC") if clock.tzinfo is None else clock.tz_convert("UTC")
+        return day >= clock.date() - timedelta(days=1)
+
     def fetch_klines(
         self,
         start: date,
@@ -389,7 +399,8 @@ class BinanceUSDMProvider(MarketDataProvider):
             filename=filename,
             source_url=KLINE_REST_URL,
             fetch=fetch,
-            validate=_validate_json_list,
+            validate=lambda payload: (_validate_json_list(payload), parse_kline_rest(json.loads(payload))),
+            refresh_existing=self._refresh_rest_day(day),
         )
         records = json.loads(cached.payload.decode("utf-8"))
         return parse_kline_rest(records), cached
@@ -432,7 +443,8 @@ class BinanceUSDMProvider(MarketDataProvider):
             filename=filename,
             source_url=OI_REST_URL,
             fetch=fetch,
-            validate=_validate_json_list,
+            validate=lambda payload: (_validate_json_list(payload), parse_metrics_rest(json.loads(payload))),
+            refresh_existing=self._refresh_rest_day(day),
         )
         records = json.loads(cached.payload.decode("utf-8"))
         return parse_metrics_rest(records), cached
