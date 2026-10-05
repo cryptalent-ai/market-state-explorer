@@ -85,6 +85,54 @@ class RawDataCache:
                 temporary.unlink()
 
     @staticmethod
+    def _stage_payload(path: Path, payload: bytes) -> Path:
+        """Flush bytes before replacing any existing cache entry (Windows-safe)."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f"{path.name}.part-{uuid4().hex}")
+        try:
+            with temporary.open("xb") as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            return temporary
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
+
+    @classmethod
+    def _replace_generated_pair(cls, path: Path, digest_path: Path, payload: bytes, digest: bytes) -> None:
+        """Stage both files, atomically replace each, roll back a failed commit.
+
+        Two files cannot be renamed as one filesystem transaction. Readers must
+        still verify their checksum: a crash between renames can never make a
+        torn pair trusted. Ordinary failures restore already-replaced files.
+        No timestamped payload history is retained on successful refresh.
+        """
+        previous = {p: p.read_bytes() if p.exists() else None for p in (path, digest_path)}
+        staged = {}
+        replaced = []
+        try:
+            staged[path] = cls._stage_payload(path, payload)
+            staged[digest_path] = cls._stage_payload(digest_path, digest)
+            for target, temporary in staged.items():
+                temporary.replace(target)
+                replaced.append(target)
+        except BaseException:
+            for target in reversed(replaced):
+                if previous[target] is None:
+                    target.unlink(missing_ok=True)
+                else:
+                    recovery = cls._stage_payload(target, previous[target])
+                    try:
+                        recovery.replace(target)
+                    finally:
+                        recovery.unlink(missing_ok=True)
+            raise
+        finally:
+            for temporary in staged.values():
+                temporary.unlink(missing_ok=True)
+
+    @staticmethod
     def _quarantine(paths: list[Path]) -> None:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         for path in paths:
@@ -132,8 +180,13 @@ class RawDataCache:
         source_url: str,
         fetch: Callable[[], bytes],
         validate: Callable[[bytes], None],
+        refresh_existing: bool = False,
     ) -> CacheResult:
-        """Cache an exact REST response payload with a locally generated digest."""
+        """Cache exact REST bytes; refresh growing dates without trusting old data.
+
+        A failed refresh propagates instead of returning a stale cached payload.
+        Fetch and validation complete before any healthy entry is replaced.
+        """
 
         path = self._path(relative_directory, filename)
         digest_path = self._path(relative_directory, f"{filename}.sha256")
@@ -144,7 +197,8 @@ class RawDataCache:
                 if hashlib.sha256(payload).hexdigest() != expected:
                     raise InvalidSourceResponse("Cached REST payload checksum mismatch.")
                 validate(payload)
-                return CacheResult(payload, path, True, source_url)
+                if not refresh_existing:
+                    return CacheResult(payload, path, True, source_url)
             except (OSError, UnicodeError, InvalidSourceResponse):
                 self._quarantine([path, digest_path])
         elif path.exists() or digest_path.exists():
@@ -153,6 +207,9 @@ class RawDataCache:
         payload = fetch()
         validate(payload)
         digest = hashlib.sha256(payload).hexdigest().encode("ascii")
-        self._atomic_write_new(digest_path, digest)
-        self._atomic_write_new(path, payload)
+        if refresh_existing:
+            self._replace_generated_pair(path, digest_path, payload, digest)
+        else:
+            self._atomic_write_new(digest_path, digest)
+            self._atomic_write_new(path, payload)
         return CacheResult(payload, path, False, source_url)

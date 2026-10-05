@@ -6,6 +6,7 @@ GitHub issue comment contains only derived/public market data and no secrets.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 from pathlib import Path
@@ -16,7 +17,10 @@ import sys
 from src.config import ModelConfig
 from src.features import build_derived_features
 from src.live_data import DEFAULT_HISTORY_DAYS, build_recent_market_data
-from src.relay import RELAY_COMMENT_ID, RELAY_REPO, build_relay_comment
+from src.relay import (
+    RELAY_COMMENT_ID, RELAY_REPO, RELAY_FRESH_SECONDS, _utc_now,
+    build_relay_comment, completed_through_age_seconds, parse_relay_comment,
+)
 
 CACHE_ROOT = Path.home() / ".market-state-explorer" / "cache"
 
@@ -81,42 +85,77 @@ def _publish_with_gh(body: str) -> None:
         raise RuntimeError(f"GitHub relay update failed: {detail}")
 
 
-def main() -> int:
-    CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+def require_fresh_market_data(completed_through: str, *, now=None) -> float:
+    age = completed_through_age_seconds(completed_through, now=now)
+    if age > RELAY_FRESH_SECONDS:
+        raise RuntimeError(f"market data is stale; completed through {completed_through}, age {age / 60:.2f} minutes")
+    return age
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dry-run", action="store_true", help="Acquire/validate/encode without updating the GitHub comment.")
+    parser.add_argument("--cache-root", type=Path, default=CACHE_ROOT)
+    args = parser.parse_args(argv)
+    args.cache_root.mkdir(parents=True, exist_ok=True)
     config = ModelConfig(display_timezone="UTC")
     market, metadata = build_recent_market_data(
-        cache_root=CACHE_ROOT,
+        cache_root=args.cache_root,
         history_days=DEFAULT_HISTORY_DAYS,
+        now=_utc_now(),
     )
     if "delayed hosted fallback" in metadata.source.lower():
         raise RuntimeError(
             "This machine also received Binance HTTP 451. Relay publishing stopped rather than "
             "mislabel delayed archive data as near-real-time."
         )
+    require_fresh_market_data(metadata.completed_through_utc, now=_utc_now())
     derived = build_derived_features(market.frame, config)
     usable = derived.dropna(subset=["effort_score", "result_score"])
     if usable.empty:
         raise RuntimeError("No usable derived states were available after warm-up.")
+    publication_time = _utc_now()
     body = build_relay_comment(
         derived,
         source="Official Binance USDⓈ-M via local near-real-time relay",
         completed_through_utc=metadata.completed_through_utc,
         oi_coverage=metadata.oi_coverage,
         future_oi_matches=metadata.future_oi_matches,
+        updated_at=publication_time,
     )
-    _publish_with_gh(body)
+    # Recheck immediately before the external write, after acquisition/model work.
+    checked_at = _utc_now()
+    age = require_fresh_market_data(metadata.completed_through_utc, now=checked_at)
+    published_frame, relay_meta = parse_relay_comment(body, now=checked_at)
+    if not relay_meta.fresh:
+        raise RuntimeError("Relay payload became stale before publication.")
+    if not args.dry_run:
+        _publish_with_gh(body)
     current = usable.iloc[-1]
+    print(json.dumps({
+        "dry_run": args.dry_run, "publication_timestamp": publication_time.isoformat(),
+        "completed_through_timestamp": metadata.completed_through_utc,
+        "market_data_age_seconds": age, "market_data_age_minutes": age / 60,
+        "latest_state_timestamp": str(published_frame.timestamp.max()),
+        "rows": len(published_frame), "market_rows": metadata.rows,
+        "oi_coverage": metadata.oi_coverage, "future_oi_matches": metadata.future_oi_matches,
+        "cache_hits": metadata.cache_hits, "downloads": metadata.downloads,
+    }))
     print(
-        "Published relay: "
-        f"{current['timestamp']} · Effort {current['effort_score']:+.2f} · "
+        ("Dry-run relay (not published): " if args.dry_run else "Published relay: ")
+        + f"{current['timestamp']} · Effort {current['effort_score']:+.2f} · "
         f"Result {current['result_score']:+.2f} · {current['positioning_state']}"
     )
     return 0
 
 
-if __name__ == "__main__":
+def run_cli(argv=None) -> int:
     try:
-        raise SystemExit(main())
+        return main(argv)
     except Exception as error:  # scheduled-task boundary: keep one concise error line
         print(f"Relay publish failed: {error}", file=sys.stderr)
-        raise SystemExit(1)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(run_cli())
