@@ -55,6 +55,8 @@ def _find_gh() -> str:
 
 
 def _publish_with_gh(body: str) -> None:
+    """Publish relay JSON through gh using UTF-8 regardless of Windows console code page."""
+
     payload = json.dumps({"body": body}, ensure_ascii=False)
     command = [
         _find_gh(),
@@ -69,6 +71,8 @@ def _publish_with_gh(body: str) -> None:
         command,
         input=payload,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         check=False,
     )
