@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, v1.3-decision-ui]
   pull_request:
 
 jobs:
