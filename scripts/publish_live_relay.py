@@ -7,7 +7,9 @@ GitHub issue comment contains only derived/public market data and no secrets.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -19,10 +21,43 @@ from src.relay import RELAY_COMMENT_ID, RELAY_REPO, build_relay_comment
 CACHE_ROOT = Path.home() / ".market-state-explorer" / "cache"
 
 
+def _find_gh() -> str:
+    """Locate GitHub CLI reliably in interactive shells and Windows scheduled tasks."""
+
+    configured = os.environ.get("MARKET_STATE_GH")
+    if configured and Path(configured).is_file():
+        return configured
+
+    on_path = shutil.which("gh")
+    if on_path:
+        return on_path
+
+    candidates = []
+    program_files = os.environ.get("ProgramFiles")
+    if program_files:
+        candidates.append(Path(program_files) / "GitHub CLI" / "gh.exe")
+    local_appdata = os.environ.get("LOCALAPPDATA")
+    if local_appdata:
+        candidates.extend(
+            [
+                Path(local_appdata) / "Programs" / "GitHub CLI" / "gh.exe",
+                Path(local_appdata) / "Microsoft" / "WinGet" / "Links" / "gh.exe",
+            ]
+        )
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+
+    raise RuntimeError(
+        "GitHub CLI (gh) was not found. Install GitHub CLI or rerun the relay installer."
+    )
+
+
 def _publish_with_gh(body: str) -> None:
     payload = json.dumps({"body": body}, ensure_ascii=False)
     command = [
-        "gh",
+        _find_gh(),
         "api",
         "--method",
         "PATCH",
