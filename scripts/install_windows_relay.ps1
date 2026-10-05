@@ -7,7 +7,7 @@ $ZipPath = Join-Path $env:TEMP "market-state-explorer-main.zip"
 $ExtractRoot = Join-Path $env:TEMP "market-state-explorer-main-extract"
 $TaskName = "MarketStateExplorerRelay"
 
-Write-Host "Market State Explorer v1.1 - Local Relay Installer" -ForegroundColor Cyan
+Write-Host "Market State Explorer - Local Relay Installer" -ForegroundColor Cyan
 Write-Host "This uses your own network connection to fetch official Binance public data."
 Write-Host "It does not use a proxy, VPN, or geo-bypass."
 
@@ -31,11 +31,26 @@ if (-not $Gh) {
     $GhPath = $Gh.Source
 }
 
-& $GhPath auth status --hostname github.com 2>$null | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "A browser window will open for GitHub authorization." -ForegroundColor Yellow
+# Windows PowerShell 5.1 can turn a native program's stderr into a terminating
+# NativeCommandError when ErrorActionPreference is Stop. `gh auth status`
+# intentionally exits non-zero before first login, so probe it non-terminatingly.
+$SavedErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+& $GhPath auth status --hostname github.com *> $null
+$GhAuthExitCode = $LASTEXITCODE
+$ErrorActionPreference = $SavedErrorActionPreference
+
+if ($GhAuthExitCode -ne 0) {
+    Write-Host "GitHub CLI is installed but not signed in." -ForegroundColor Yellow
+    Write-Host "A browser authorization flow will start now." -ForegroundColor Yellow
     & $GhPath auth login --hostname github.com --web --git-protocol https
     if ($LASTEXITCODE -ne 0) { throw "GitHub authentication was not completed." }
+}
+
+# Make the freshly installed gh executable visible to child processes in this run.
+$GhDir = Split-Path -Parent $GhPath
+if (($env:PATH -split ';') -notcontains $GhDir) {
+    $env:PATH = "$GhDir;$env:PATH"
 }
 
 Write-Host "Downloading the current production source..."
