@@ -13,7 +13,7 @@ from .formatting import number, timestamp
 from .state_views import (
     boundary_label, build_timeline_frame, compute_recent_state_summary,
     compute_region_occupancy, compute_state_rarity, extract_region_transitions, flag,
-    match_current_validation_rows, prepare_state_frame, research_label,
+    match_current_validation_rows, prepare_state_frame, research_label, switching_label,
 )
 from .web_app import (
     WEB_FORWARD_HORIZONS, _freshness_text, _is_delayed_archive, _is_relay,
@@ -38,6 +38,9 @@ STYLE = """<style>
 .v13-table th{color:#BAC4CF}.v13-table tr:first-child td{background:#1D2227}
 .v13-legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:.75rem;color:#CFD8E3;margin:5px 0 10px}
 .v13-dot{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px}
+.v13-observation{border-left:3px solid #FFD54F;background:#1D1C17;padding:8px 12px;margin:12px 0 8px}
+.v13-overview{margin:10px 0 16px}.v13-overview-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 24px;margin:10px 0}
+@media(max-width:650px){.v13-overview-grid{grid-template-columns:1fr}}
 @media(max-width:650px){.v13-table{font-size:.72rem}.v13-table th,.v13-table td{padding:5px}.v13-grid{grid-template-columns:1fr}.v13-grid.compact{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style>"""
 
@@ -59,7 +62,8 @@ def _plot(figure):
 
 def _source_status(meta, source_label, error):
     if _is_relay(meta):
-        st.success(f"Near-real-time Relay active · published {_freshness_text(meta)} · completed through UTC {meta.completed_through_utc}")
+        st.success(f"RELAY PUBLICATION FRESHNESS · Near-real-time Relay active · published {_freshness_text(meta)}")
+        st.caption(f"Relay published at UTC {meta.updated_at_utc} · dataset completed through UTC {meta.completed_through_utc}. Publication age is not the market-bar timestamp.")
     elif _is_delayed_archive(meta):
         st.warning(f"Delayed official Archive fallback — NOT the current market state · completed through UTC {meta.completed_through_utc}")
         if error:
@@ -72,7 +76,9 @@ def _source_status(meta, source_label, error):
 
 def render_current_state(frame, timezone):
     current = frame.iloc[-1]
-    st.caption(f"LATEST VALID STATE · {timestamp(current['timestamp'], timezone)} · {timezone}")
+    st.markdown('<div class="v13-observation"><div class="v13-title">LATEST VALID STATE · MARKET-BAR TIMESTAMP</div>'
+                f'<div class="v13-value">{escape(timestamp(current["timestamp"], timezone))} · {escape(timezone)}</div>'
+                '<div class="v13-note">Observation time in the selected dataset; source / publication freshness is shown separately above.</div></div>', unsafe_allow_html=True)
     _cards([
         ("Current / latest Effort–Result Region", current["effort_result_region"], boundary_label(current)),
         ("Current / latest Positioning State", current["positioning_state"], "Existing audited classification"),
@@ -102,12 +108,14 @@ def render_recent_summary(frame, recent_n):
                f"Window discontinuities: {summary['gaps']}; transitions and changes never bridge missing bars or segment boundaries.")
 
 
-def render_ribbon(frame, recent_n, timezone):
+def render_ribbon(frame, recent_n, timezone, *, recent_categories_only=False):
     st.subheader("Recent state timeline · oldest → latest")
     _plot(timeline_ribbon_figure(frame, recent_n, timezone))
+    recent = build_timeline_frame(frame, recent_n)
     for title, mapping in (("Region", REGION_COLORS), ("Positioning", charts_v12.POSITIONING_COLORS)):
-        present = set(frame.tail(recent_n)["effort_result_region" if title == "Region" else "positioning_state"])
-        labels = ''.join(f'<span><i class="v13-dot" style="background:{color}"></i>{escape(label)}</span>' for label, color in mapping.items() if title == "Region" or label in present)
+        present = set(recent["effort_result_region" if title == "Region" else "positioning_state"])
+        colors = {**mapping, **{label: "#303438" for label in sorted(present - mapping.keys())}}
+        labels = ''.join(f'<span><i class="v13-dot" style="background:{color}"></i>{escape(label)}</span>' for label, color in colors.items() if label in present or (title == "Region" and not recent_categories_only))
         st.markdown(f'<div class="v13-note">{title}</div><div class="v13-legend">{labels}</div>', unsafe_allow_html=True)
     st.caption("Research: gray = none, muted gold = an existing event (full name in hover). Boundary: pale neutral = near zero; gray = not near zero. Unknown = charcoal. Gold outline = latest observation, not a trade instruction.")
 
@@ -154,7 +162,7 @@ def _decision_strip(frame, history, recent_n, validation):
     sample_note = "No matched row" if matched.empty else "; ".join(f"H{int(r['Horizon'])}: N={number(r.get('Non-Overlapping N'),0)} ({r['Matched scope']})" for _, r in matched.iterrows())
     _cards([
         (f"Dominant Region · recent {summary['n']}", summary["dominant_region"], f"{summary['dominant_region_count']} / {summary['n']} states"),
-        ("Persistence / switching", f"{summary['region_transitions']} Region changes / {summary['comparable_steps']} steps", f"{summary['positioning_transitions']} Positioning changes · {summary['gaps']} discontinuities"),
+        ("Persistence / switching", switching_label(summary['region_transitions'], summary['comparable_steps']), f"Region: {summary['region_transitions']} changes / {summary['comparable_steps']} comparable steps · Positioning: {summary['positioning_transitions']} changes · {summary['gaps']} discontinuities. UI description only."),
         ("Current Region · visible history", f"{number(rarity['Current region frequency %'], 1)}% · {rarity['Frequency description']}", f"N={rarity['n']} valid states; descriptive frequency, not predictive rarity"),
         ("Historical validation sample", quality, sample_note),
     ], compact=True)
@@ -194,8 +202,30 @@ def render_state_map(frame, config, history, recent_n):
                                         timezone=config.display_timezone, mode=mode, recent_points=recent_n, color_by=color))
 
 
+def render_trajectory_summary(frame, recent_n):
+    summary = compute_recent_state_summary(frame, recent_n)
+    if not summary["n"]:
+        st.info("No valid states are available for the recent-state overview.")
+        return
+    steps = summary["comparable_steps"]
+    region_changes = summary["region_transitions"]
+    positioning_changes = summary["positioning_transitions"]
+    current = build_timeline_frame(frame, recent_n).iloc[-1]
+    items = [
+        ("Dominant recent Region", summary["dominant_region"], f"{summary['dominant_region_count']} / {summary['n']} states"),
+        ("Dominant recent Positioning", summary["dominant_positioning"], f"{summary['dominant_positioning_count']} / {summary['n']} states"),
+        ("Switching intensity · Region", switching_label(region_changes, steps), f"Region: {region_changes} / {steps} comparable steps; Positioning: {switching_label(positioning_changes, steps)} ({positioning_changes} / {steps})"),
+        ("Current Region", current["effort_result_region"], "Latest valid observation"),
+        ("Zero-boundary status", summary["boundary"], "Existing audited boundary flag"),
+    ]
+    fields = ''.join(f'<div><div class="v13-title">{escape(label)}</div><div class="v13-value">{escape(value)}</div><div class="v13-note">{escape(note)}</div></div>' for label, value, note in items)
+    st.markdown(f'<div class="v13-card current v13-overview"><div class="v13-title">RECENT {summary["n"]}-STATE OVERVIEW</div><div class="v13-overview-grid">{fields}</div>'
+                f'<div class="v13-note">{summary["gaps"]} discontinuities excluded. Switching wording only: ≤ 1/3 = Mostly stable; ≥ 2/3 = Frequent switching; otherwise Moderate switching. No comparable steps = Unavailable. Not a model signal.</div></div>', unsafe_allow_html=True)
+
+
 def render_trajectory(frame, config, recent_n):
-    render_ribbon(frame, recent_n, config.display_timezone)
+    render_trajectory_summary(frame, recent_n)
+    render_ribbon(frame, recent_n, config.display_timezone, recent_categories_only=True)
     render_recent_summary(frame, recent_n)
     st.subheader("Chronological state measurements")
     _plot(small_multiples_figure(frame, recent_n, config.display_timezone))

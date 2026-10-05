@@ -21,6 +21,22 @@ EVENT_COLUMNS = ("lehr_short_pressure", "lehr_long_pressure", "helr_event")
 ADEQUATE_QUALITIES = {"Usable research sample", "Exploratory"}
 
 
+def switching_label(transitions: int, comparable_steps: int) -> str:
+    """UI wording only, from existing counts; never a model/validation signal.
+
+    At most one third switching is mostly stable; at least two thirds is
+    frequent. No comparable steps means unavailable, not stable.
+    Integer comparisons keep the descriptive endpoints exact.
+    """
+    if comparable_steps <= 0:
+        return "Unavailable"
+    if 3 * transitions <= comparable_steps:
+        return "Mostly stable"
+    if 3 * transitions >= 2 * comparable_steps:
+        return "Frequent switching"
+    return "Moderate switching"
+
+
 def flag(value) -> bool | None:
     """Parse nullable / CSV flags without treating the string 'False' as True."""
     if pd.isna(value):
