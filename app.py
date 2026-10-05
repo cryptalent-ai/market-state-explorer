@@ -1,4 +1,4 @@
-"""Market State Explorer v1.1 — Near-Real-Time Relay Edition."""
-from src.web_app import run
+"""Market State Explorer v1.2 — Visual Clarity Edition."""
+from src.web_app_v12 import run
 
 run()
