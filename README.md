@@ -1,4 +1,32 @@
-# Market State Explorer v1.1 — Near-Real-Time Relay Edition
+# Market State Explorer v1.3 — Decision-Oriented Visual Edition
+
+v1.3 changes presentation only. The audited model, validation, Relay freshness,
+official Archive fallback and CSV pipeline are unchanged. Production `main`
+remains separate; preview branch: `v1.3-decision-ui`.
+
+- **Dashboard:** full current labels and freshness, dominant recent Region,
+  transition counts, visible-history frequency, boundary status and historical
+  sample quality above a categorical matrix; then chronological ribbon, summary,
+  newest-first five-state table and historical validation snapshot.
+- **State Map:** categorical matrix, occupancy comparison and visible-history
+  percentiles. Density / Recent / Full Scatter remain under Advanced.
+- **Trajectory:** chronological ribbon, four time series and Region transition
+  table. The old phase trajectory remains under Advanced.
+
+History controls: 250 / 500 / 1000 / All available valid derived states. Recent
+controls: 5 / 8 / **12 (default)** / 20 / 30. Full labels wrap instead of ellipsizing.
+Historical frequency on a Relay window is explicitly limited to the published
+window, not the annual research dataset. Dashboard validation uses the unchanged
+bundled 2025-09-01 → 2026-08-31 audited snapshot, not Relay forward outcomes.
+Matching and marginal fallback scopes are labelled per horizon; insufficient,
+exploratory and usable samples remain distinct. Median is read from the published
+50th percentile if the compact snapshot has no separate median field.
+
+See [formal specification](docs/V1.3_VISUAL_REDESIGN_SPEC.md),
+[implementation/acceptance report](docs/V1.3_IMPLEMENTATION_REPORT.md), and
+[separate preview deployment instructions](DEPLOYMENT.md).
+
+## Preserved Near-Real-Time Relay edition
 
 Market State Explorer is an interpretable BTCUSDT 5-minute research dashboard built around three ideas:
 
@@ -180,9 +208,9 @@ source .venv/bin/activate
 
 ## Automated verification
 
-GitHub Actions runs on pull requests and pushes to `main` using Python 3.12. It compiles `app.py`, `src`, and `tests`, then runs the pytest suite. Relay tests verify compressed round-trip decoding, the 15-minute freshness rule, and rejection of future OI matches.
+GitHub Actions runs on pull requests and pushes to `main` or `v1.3-decision-ui` using Python 3.12. It compiles `app.py`, `src`, and `tests`, then runs the pytest suite. Relay tests verify compressed round-trip decoding, the 15-minute freshness rule, and rejection of future OI matches.
 
-## Streamlit deployment
+## Preserved production deployment (do not change for preview)
 
 ```text
 Repository: cryptalent-ai/market-state-explorer

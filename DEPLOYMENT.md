@@ -1,58 +1,66 @@
-# Market State Explorer v0.1.3 — Web Deployment
+# v1.3 isolated preview deployment
 
-This edition is prepared for a small public Streamlit deployment while retaining
-all v0.1.2 quantitative definitions unchanged.
+Do not change the existing production app's branch or settings. Do not merge
+`v1.3-decision-ui` into `main` before user acceptance.
 
-## Recommended first deployment: Streamlit Community Cloud
+## Streamlit Community Cloud preview
 
-1. Put this project in a GitHub repository.
-2. In Streamlit Community Cloud, create a new app from that repository.
-3. Select the repository branch that contains this project.
-4. Set the entry point to `app.py`.
-5. Select Python 3.12 when the platform offers a Python-version choice.
-6. Deploy.
+Create a **separate** app (not a redeploy of production), using:
 
-The repository includes `requirements.txt` and `.streamlit/config.toml` so no
-manual package list is required.
+| Setting | Value |
+| --- | --- |
+| Repository | `cryptalent-ai/market-state-explorer` |
+| Branch | `v1.3-decision-ui` |
+| Entry point | `app.py` |
+| Python | `3.12` |
+| Dependency file | existing `requirements.txt` |
+| Theme | existing `.streamlit/config.toml` |
 
-## What works immediately
+Choose a separate preview URL. No secrets, Binance account or API keys are
+required. The preview reads the existing public Relay; it never publishes or
+reconfigures it. Auto source priority is unchanged. Fresh Relay is green; stale
+Relay is rejected; HTTP 451 uses official delayed archives with a warning. Upload
+CSV and the full Validation page remain available.
 
-The landing page is **Research Snapshot**. It uses only the small files under
-`analysis/v0.1.2/`, so the public site is useful before anyone downloads exchange
-data. It includes the 12-month BTCUSDT 5m validation snapshot and the pre-specified
-High Effort / High Result × Short Covering comparison.
+Cloud deployment itself requires the account owner's deploy action; a successful
+local startup and CI do not certify a running Community Cloud deployment.
 
-The existing CSV Upload workflow remains available.
+## Local preview (Python 3.12)
 
-The Native Data Builder also remains available, but it is resource-intensive.
-Free hosting may sleep, reset local files, or impose CPU/RAM/runtime limits. Start
-with about 30 days. For ranges above 31 days the UI requires explicit confirmation.
-Always download a built dataset if you want a durable copy; cloud-local cache is
-not treated as permanent storage.
+```bash
+git clone --branch v1.3-decision-ui https://github.com/cryptalent-ai/market-state-explorer.git
+cd market-state-explorer
+python -m venv .venv
+```
 
-## Public deployment safety
-
-- No Binance API key or account credentials are used.
-- Raw/processed runtime data remain excluded by `.gitignore`.
-- The bundled 12-month research report has local Windows paths removed.
-- No authenticated trading or order execution exists.
-- The app explicitly states that state classification is not a trading signal.
-
-## Local launch
+Activate `.venv` using your shell, then:
 
 ```bash
 python -m pip install -e ".[dev]"
-python -m streamlit run app.py
+python -m pytest
+python -m streamlit run app.py --server.port=8513
 ```
 
-## Generic hosting command
+Open `http://localhost:8513`. If editing imported modules during development,
+restart the local preview process to verify a clean import; no hot-reload module
+alias is used. A fresh branch deployment starts with clean versioned imports.
 
-A host that provides a `PORT` environment variable can generally launch with:
+## Human acceptance checklist
 
-```bash
-python -m streamlit run app.py --server.address=0.0.0.0 --server.port=$PORT
-```
+On Dashboard, without opening scatter, answer within 3–5 seconds:
 
-Hosting plans and free-tier limits can change. Verify the chosen provider's
-current limits before relying on it for long historical builds or persistent
-storage.
+1. Current/latest full Region.
+2. Full Positioning State.
+3. Dominant Region in recent 12 valid states (ties explicitly labelled).
+4. Region/Positioning changes versus adjacent-step count.
+5. Current Region's visible-history frequency and relative frequency rank.
+6. Existing near-zero-boundary flag.
+7. Historical validation quality, N and matched scope per horizon.
+
+Then verify State Map starts with matrix/occupancy/percentiles; Trajectory starts
+with timeline/time series/transitions; both legacy 2D views are collapsed under
+Advanced. Check full labels at laptop width and timestamps increasing toward the
+right. Confirm delayed archives are NOT described as current market data.
+
+Do not infer trading edge from this UI. Sample quality belongs to the historical
+benchmark and its matched scope, not to the Relay's compact observation window.
