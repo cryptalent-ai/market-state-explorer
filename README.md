@@ -92,7 +92,22 @@ The installer:
 - downloads the current `main` branch into `%LOCALAPPDATA%\MarketStateExplorerRelay`;
 - creates an isolated Python virtual environment;
 - performs one real relay publish test;
-- creates a Windows Scheduled Task named `MarketStateExplorerRelay` that runs every five minutes.
+- creates or updates a Windows Scheduled Task named `MarketStateExplorerRelay` that runs every five minutes.
+
+v1.3.2 changes only the Windows launcher/install layer. Scheduled execution uses
+`wscript.exe` → `run_relay_hidden.vbs` → hidden Windows PowerShell
+`run_relay_hidden.ps1` → the unchanged production publisher. Both launcher files
+are generated in `%LOCALAPPDATA%\MarketStateExplorerRelay`. Publisher stdout and
+stderr append to `relay.log` there; Python failures propagate to Task Scheduler
+as nonzero results. Reinstall overwrites the launchers without deleting the
+existing log, environment, or `~/.market-state-explorer/cache`.
+
+The installer still downloads **current main**, authenticates GitHub CLI as
+before, and performs a live publish through the same hidden launcher before
+registering/updating the task. See
+[Windows Silent Relay acceptance instructions](docs/V1.3.2_WINDOWS_SILENT_RELAY.md).
+Console visibility requires manual Windows acceptance; automated tests do not
+claim to prove that no window is visible.
 
 To remove the task later:
 
