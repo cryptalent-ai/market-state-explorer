@@ -1,17 +1,23 @@
-# Market State Explorer v1.3 — Decision-Oriented Visual Edition
+# Market State Explorer v1.3.3 — Discrete State Views
 
-v1.3 changes presentation only. The audited model, validation, Relay freshness,
+v1.3.3 changes visualization semantics only. The audited model, validation, Relay freshness,
 official Archive fallback and CSV pipeline are unchanged. Production `main`
-remains separate; preview branch: `v1.3-decision-ui`.
+remains separate; preview branch: `v1.3.3-remove-state-paths`.
 
 - **Dashboard:** full current labels and freshness, dominant recent Region,
   transition counts, visible-history frequency, boundary status and historical
   sample quality above a categorical matrix; then chronological ribbon, summary,
   newest-first five-state table and historical validation snapshot.
 - **State Map:** categorical matrix, occupancy comparison and visible-history
-  percentiles. Density / Recent / Full Scatter remain under Advanced.
-- **Trajectory:** chronological ribbon, four time series and Region transition
-  table. The old phase trajectory remains under Advanced.
+  percentiles. Advanced retains density and unconnected recent points, Previous
+  open circle, Current gold star, and only the eligible Previous → Current vector.
+- **Trajectory:** Effort / Result over actual timestamps in two shared-X panels,
+  latest differences, existing chronological ribbon and Region transition table.
+  Unconnected **2D Snapshot Cloud** is collapsed under Advanced; no full phase path.
+
+Market observations are discrete sampled states. Straight-line interpolation
+between historical observations is not interpreted as an observed continuous
+market path. See [v1.3.3 semantics, protected-file verification, preview and screenshots](docs/V1.3.3_DISCRETE_STATE_VIEWS.md).
 
 History controls: 250 / 500 / 1000 / All available valid derived states. Recent
 controls: 5 / 8 / **12 (default)** / 20 / 30. Full labels wrap instead of ellipsizing.
@@ -223,7 +229,7 @@ source .venv/bin/activate
 
 ## Automated verification
 
-GitHub Actions runs on pull requests and pushes to `main` or `v1.3-decision-ui` using Python 3.12. It compiles `app.py`, `src`, and `tests`, then runs the pytest suite. Relay tests verify compressed round-trip decoding, the 15-minute freshness rule, and rejection of future OI matches.
+GitHub Actions runs on pull requests and pushes to `main` or the listed versioned preview branches, including `v1.3.3-remove-state-paths`, using Python 3.12 on Ubuntu and Windows. It compiles `app.py`, `scripts`, `src`, and `tests`, then runs the full pytest suite. Relay tests verify compressed round-trip decoding, publication AND market-data freshness, and rejection of future OI matches.
 
 ## Preserved production deployment (do not change for preview)
 

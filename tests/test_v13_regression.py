@@ -27,6 +27,7 @@ ROOT = Path(__file__).parents[1]
 BASELINE = json.loads((ROOT / "tests/fixtures/v121_baseline.json").read_text("utf-8"))
 VALUES = json.loads(zlib.decompress(base64.b64decode(BASELINE["zlib_base64"])))
 HOTFIX_HASHES = json.loads((ROOT / "tests/fixtures/v131_source_sha256.json").read_text("utf-8"))
+VISUAL_HASHES = json.loads((ROOT / "tests/fixtures/v133_visual_scope_sha256.json").read_text("utf-8"))
 # Only these source-orchestration files are authorized to change in v1.3.1.
 # The original quantitative numeric fixture and all other source pins stay intact.
 AUTHORIZED_FRESHNESS_FILES = {"src/relay.py", "src/providers/binance_usdm.py"}
@@ -40,8 +41,11 @@ def test_frozen_model_and_source_files(path, expected):
 
 
 @pytest.mark.parametrize("path", ["src/state_views.py", "src/charts_v13.py", "src/web_app_v13.py"])
-def test_v13_accepted_ui_is_byte_unchanged(path):
-    assert hashlib.sha256((ROOT/path).read_bytes().replace(b"\r\n", b"\n")).hexdigest() == HOTFIX_HASHES[path]
+def test_accepted_ui_source_pins(path):
+    # v1.3.3 authorizes ONLY the active UI page adapter to change. The old
+    # fixture, pure state transforms and accepted v1.3 charts stay untouched.
+    expected = VISUAL_HASHES["authorized_ui_sha256"].get(path, HOTFIX_HASHES[path])
+    assert hashlib.sha256((ROOT/path).read_bytes().replace(b"\r\n", b"\n")).hexdigest() == expected
 
 
 def test_hotfix_source_pin_scope_is_explicit():
