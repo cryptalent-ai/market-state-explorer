@@ -7,7 +7,8 @@ import pandas as pd
 import streamlit as st
 
 from . import charts_v12
-from .charts_v13 import REGION_COLORS, small_multiples_figure, state_matrix_figure, timeline_ribbon_figure
+from .charts_v13 import REGION_COLORS, state_matrix_figure, timeline_ribbon_figure
+from .charts_v133 import DISCRETE_STATE_NOTE, effort_result_time_figure, snapshot_cloud_figure, state_map_figure
 from .config import ModelConfig
 from .formatting import number, timestamp
 from .state_views import (
@@ -198,8 +199,10 @@ def render_state_map(frame, config, history, recent_n):
     with st.expander("Advanced: 2D state-space views", expanded=False):
         mode = st.selectbox("Map view", ("Density + recent", "Recent only", "Full scatter"))
         color = st.selectbox("Full-scatter color", ("Direction", "Positioning"))
-        _plot(charts_v12.state_map_figure(frame, history=len(frame) if history is None else history,
-                                        timezone=config.display_timezone, mode=mode, recent_points=recent_n, color_by=color))
+        _plot(state_map_figure(frame, history=history, timezone=config.display_timezone,
+                               mode=mode, recent_points=recent_n, color_by=color))
+        st.caption("Smaller, muted points are older; larger, brighter points are newer. Previous = open circle; Current = gold star. Only the latest comparable pair has a direction vector; gaps and zero displacement have no arrow.")
+        st.caption(DISCRETE_STATE_NOTE)
 
 
 def render_trajectory_summary(frame, recent_n):
@@ -225,10 +228,16 @@ def render_trajectory_summary(frame, recent_n):
 
 def render_trajectory(frame, config, recent_n):
     render_trajectory_summary(frame, recent_n)
+    st.subheader("Effort / Result over Time")
+    summary = compute_recent_state_summary(frame, recent_n)
+    _cards([
+        ("Latest ΔEffort", number(summary.get("latest_effort"), 2, signed=True), "Current − Previous · robust z-score"),
+        ("Latest ΔResult", number(summary.get("latest_result"), 2, signed=True), "Unavailable across missing bars / segment boundaries"),
+    ], compact=True)
+    _plot(effort_result_time_figure(frame, recent_n=recent_n, timezone=config.display_timezone))
+    st.caption(DISCRETE_STATE_NOTE + " Time-panel lines are reading guides only and break at discontinuities.")
     render_ribbon(frame, recent_n, config.display_timezone, recent_categories_only=True)
     render_recent_summary(frame, recent_n)
-    st.subheader("Chronological state measurements")
-    _plot(small_multiples_figure(frame, recent_n, config.display_timezone))
     st.subheader("Region transitions · chronological")
     transitions = extract_region_transitions(frame, recent_n)
     if transitions.empty:
@@ -238,14 +247,15 @@ def render_trajectory(frame, config, recent_n):
         for c in ("effort_score", "result_score"):
             transitions[c] = transitions[c].map(lambda v: number(v, 2))
         _table(transitions.rename(columns={"timestamp": "Timestamp", "From": "From Region", "To": "To Region", "effort_score": "Effort", "result_score": "Result"}))
-    with st.expander("Advanced: 2D phase trajectory", expanded=False):
-        _plot(charts_v12.trajectory_figure(frame, trail_length=recent_n, timezone=config.display_timezone, view="2D trajectory"))
+    with st.expander("Advanced: 2D Snapshot Cloud", expanded=False):
+        _plot(snapshot_cloud_figure(frame, recent_n=recent_n, timezone=config.display_timezone))
+        st.caption("Discrete snapshots, not a continuous phase trajectory. Only Previous → Current is shown when comparable and nonzero.")
 
 
 def run():
-    st.set_page_config(page_title="Market State Explorer v1.3", layout="wide")
+    st.set_page_config(page_title="Market State Explorer v1.3.3", layout="wide")
     st.markdown(STYLE, unsafe_allow_html=True)
-    st.title("Market State Explorer v1.3")
+    st.title("Market State Explorer v1.3.3")
     st.caption("Decision-Oriented Visual Edition · descriptive research, not trading recommendations")
     report, candidate, validation = load_snapshot()
     with st.sidebar:
@@ -272,6 +282,7 @@ def run():
     _sidebar_status(active, quality, meta, error, source, section)
     if section == "Methodology":
         st.header("Methodology & Guardrails")
+        st.markdown(DISCRETE_STATE_NOTE)
         st.markdown("Effort, Result, Positioning, thresholds, boundary logic and Research Events are unchanged. Rolling reference windows exclude the current observation; OI alignment is backward-only. Forward outcomes and non-overlapping validation are unchanged.")
         st.markdown("The v1.3 presentation reads already-derived states: categorical occupancy, chronological ribbons, observed transitions, finite-sample percentiles and published validation-row matching. Missing optional fields are unavailable, never reconstructed. Discontinuities are not counted as transitions.")
         st.markdown("Relay data is current only while fresh under the existing 15-minute rule. HTTP 451 falls back to official delayed archives. CSV calculations use the same audited pipeline. Dashboard validation uses the bundled 2025-09-01 → 2026-08-31 BTCUSDT 5m benchmark; it is historical context, not a prediction for the Relay state. Validation retains existing active-dataset sampling controls and 5/10/15/20/30/60 horizons.")
@@ -300,4 +311,4 @@ def run():
     if active is not None:
         st.sidebar.download_button("Download derived_features.csv", active.to_csv(index=False).encode("utf-8"), file_name="derived_features.csv", mime="text/csv")
     st.divider()
-    st.caption("Visualization ≠ Edge · Correlation ≠ Causation · State Classification ≠ Trade Signal · v1.3")
+    st.caption("Visualization ≠ Edge · Correlation ≠ Causation · State Classification ≠ Trade Signal · v1.3.3")

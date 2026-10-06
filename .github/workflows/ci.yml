@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, v1.3-decision-ui, v1.3.1-relay-freshness-hotfix, v1.3.2-windows-silent-relay]
+    branches: [main, v1.3-decision-ui, v1.3.1-relay-freshness-hotfix, v1.3.2-windows-silent-relay, v1.3.3-remove-state-paths]
   pull_request:
 
 jobs:
